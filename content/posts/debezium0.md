@@ -48,7 +48,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: test-kafka-connector-debezium
-  namespace: kxjl
+  namespace: test
   labels:
     app: test-kafka-connector-debezium
 spec:
