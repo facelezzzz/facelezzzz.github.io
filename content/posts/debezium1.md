@@ -26,7 +26,7 @@ initial模式且进行的是第一次初始化时，debezium首先会获取全�
 
 ## 3.重启失败
 之前我们碰到过一个特别的情况，日志如下
-
+```
 [2021-11-22 03:52:40,126] INFO Snapshot step 2 - Determining captured tables (io.debezium.relational.RelationalSnapshotChangeEventSource)
 [2021-11-22 03:52:40,126] INFO Read list of available databases (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource)
 [2021-11-22 03:52:40,128] INFO Read list of available tables in each database (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource)
@@ -75,6 +75,6 @@ at io.debezium.pipeline.source.AbstractSnapshotChangeEventSource.execute(Abstrac
 ... 6 more
 
 [2021-11-22 03:52:40,595] INFO Stopping down connector (io.debezium.connector.common.BaseSourceTask)
----
+```
 当前是运维在维护mysql时进行了误操作，将某个mysql的新的binlog给删了，然后节点也临时下了个，执行debezium重启后报错，实际上报错就是
 在新的节点上找不到GTID对于的binlog记录，可以通过创建连接器或者恢复binlog来修复这个问题。
