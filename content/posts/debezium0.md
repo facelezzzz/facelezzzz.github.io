@@ -1,6 +1,6 @@
 ---
-title: CDC: debezium k8s实践
-description: 在云上部署Debezium避免mysql和redis双重写入问题
+title: CDC debezium k8s实践
+description: 在k8s部署Debezium避免mysql和redis双重写入问题
 date: "2021-05-18"
 tags: ["Debezium","数据一致性"]
 ---
