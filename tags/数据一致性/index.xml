@@ -1,21 +1,145 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>数据一致性 on facelezzzz</title><link>https://facelezzzz.github.io/tags/%E6%95%B0%E6%8D%AE%E4%B8%80%E8%87%B4%E6%80%A7/</link><description>Recent content in 数据一致性 on facelezzzz</description><generator>Hugo -- gohugo.io</generator><language>en-us</language><lastBuildDate>Fri, 18 Jun 2021 00:00:00 +0000</lastBuildDate><atom:link href="https://facelezzzz.github.io/tags/%E6%95%B0%E6%8D%AE%E4%B8%80%E8%87%B4%E6%80%A7/index.xml" rel="self" type="application/rss+xml"/><item><title>CDC debezium 常见问题</title><link>https://facelezzzz.github.io/posts/debezium1/</link><pubDate>Fri, 18 Jun 2021 00:00:00 +0000</pubDate><guid>https://facelezzzz.github.io/posts/debezium1/</guid><description>1.Mysql HA拓扑故障转移后，debezium失效 严格意义讲这其实不算是debezium的问题。因为从原理上，debezium只是订阅了某个节点的binlog文件，并重放到kafka。 所以对于HA拓扑下，如果没有启用mysql的GTID，则debezium始终跟随其中的一个节点(binlog加position(可以简单理解为物理点位))，如果该节点失效，需要等待该节点 恢复。
-在生产上可以启动mysql的GTID（全局事物标识）,这样debezium可以使用事务标识（可以简单理解为逻辑点位）而非之前的position,当debezium当前跟随的 节点故障后，随着故障转移，可以通过重启debezium任务让debezium在另一个活跃的节点上正常工作（通过GTID匹配另一节点的binlog）。
-2.DB实例锁定 默认的debezium在第一次初始化时，执行 snapshot.mode=initial
-在官网的文档中，其第一步就是”Grabs a global read lock that blocks writes by other database clients. “，所以在 initial模式且进行的是第一次初始化时，debezium首先会获取全局读锁一直阻塞客户端对整个db的写，直到读取需要监视的表的schema后 才会释放锁。
-在启用GTID的情况下可以为需要捕获的节点新增一个slave,等slave同步后，让debezium订阅该slave，当snapshot执行完成后，下掉这个临时的节点，并 重启启动debezium任务。
-3.重启失败 之前我们碰到过一个特别的情况，日志如下
-[2021-11-22 03:52:40,126] INFO Snapshot step 2 - Determining captured tables (io.debezium.relational.RelationalSnapshotChangeEventSource) [2021-11-22 03:52:40,126] INFO Read list of available databases (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource) [2021-11-22 03:52:40,128] INFO Read list of available tables in each database (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource) ... [2021-11-22 03:52:40,155] INFO Snapshot step 4 - Determining snapshot offset (io.</description></item><item><title>CDC debezium k8s实践</title><link>https://facelezzzz.github.io/posts/debezium0/</link><pubDate>Tue, 18 May 2021 00:00:00 +0000</pubDate><guid>https://facelezzzz.github.io/posts/debezium0/</guid><description>最近在处理呼叫中心的控制组件时（该组件提供简单的API允许用户发起外部呼叫请求（指使用机器人对某人打电话））碰到一个问题，在过去，控制组件接收用户的提交的呼叫数据后写入mysql，然后控制组件从mysql扫描提交的数据并写入redis，在数据量很小的情况下，这种模式工作的很好，然而随着数据量快速上升，扫描变得越来越慢，开始影响到用户。
-呼叫数据表一共有15列，其中有些关键的字段，例如:CREATE_TIME（创建时间）/STATE（状态，用来标记是否已经写入redis）/PHONE（用户的号码，可能是加密号）/ID（偏序自增的标识，作为主键，由发号器生成）/PAYLOAD（载体，必要的信息，可能会很长）。
-在旧的模式下，定时任务从表中根据STATE扫描出未进入redis的数据，然后提交到redis队列中，当更改成功时修改每条数据的STATE字段，随着业务量上升，数据量开始快速膨胀（大约亿级每月），根据CREATE_TIME扫描的速度开始变慢，同时由于扫描耗时增长（数据库负载增加），也影响到插入，系统开始变得缓慢，需要优化。
-有一些看上去不太可靠的方式：a.直接向redis写入呼叫数据，然后从redis同步数据到mysql（写入mysql是必要的，后续有其他组件依赖于此）；b.先向kafka写入呼叫数据，然后分别同步到redis和kafka; c.使用cdc工具 d.写入mysql时同时写入redis
-a首先被否决，因为如果用户请求超时，则没有好的办法判断请求的状态（失败？成功写入redis？写入redis成功但是同步mysql异常？），此外从redis同步到mysql并没有合适的解决方案，此外在呼叫中心上，重复呼叫是需要避免的，系统需要提供幂性。
-b其实看上去可以解决问题，但是还是缺失事务，因为提交呼叫数据时，有其他的同事务操作，当然可以通过一些手段避免事务，但是会增大复杂性。
-d其实最简单，但是存在双写问题。
-最后c方案被选择，CDC看上去完美符合需求，保持原来的写入逻辑，将扫描操作移除，改为由CDC捕获binlog同步变化到redis。
-存在很多CDC工具，如canal，maxwell，debezium等，在一番测试后，最终确定了debezium。理由是debezium更符合需要，开源，由红帽支持，默认情况下使用kafka connect（解决了高可用的问题），此外写入到kafka能直接被下游的系统消费。
-在云上部署 官网提供Demo在Docker上运行简单的示例，这里提供在k8s上部署的示例。
-制作镜像: 在debezium官网下载debezium-connector-mysql-1.5.4.Final-plugin.tar
-基于confluentinc公司的kafka connect构建需要的镜像： DOCKERFILE如下：
-FROM confluentinc/cp-kafka-connect:6.2.0 ADD debezium-connector-mysql-1.5.4.Final-plugin.tar /plugins/ 构建完成后推送到必要的仓库。
-制作Deployment 参照https://docs.confluent.io/platform/current/installation/docker/config-reference.html
-apiVersion: apps/v1 kind: Deployment metadata: name: test-kafka-connector-debezium namespace: test labels: app: test-kafka-connector-debezium spec: replicas: 3 selector: matchLabels: app: test-kafka-connector-debezium template: metadata: labels: app: test-kafka-connector-debezium logging: 'true' spec: containers: - name: test-kafka-connector-debezium image: &amp;quot;&amp;lt;your_private_Harbor&amp;gt;/test/cp-kafka-connect-debezium:1.6.1&amp;quot; imagePullPolicy: Always ports: - containerPort: 8080 env: - name: CONNECT_BOOTSTRAP_SERVERS value: &amp;lt;kafka_cluter_addrs&amp;gt; - name: CONNECT_REST_PORT value: '&amp;lt;rest_port&amp;gt;' - name: CONNECT_GROUP_ID value: test-debezium-connect-group - name: CONNECT_CONFIG_STORAGE_TOPIC value: test-debezium-connect-config-storage - name: CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR value: '&amp;lt;factor_for_replacation&amp;gt;' - name: CONNECT_OFFSET_STORAGE_TOPIC value: test-debezium-connect-offset-storage - name: CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR value: 'factor_for_replacation' - name: CONNECT_STATUS_STORAGE_TOPIC value: test-debezium-connect-status-storage - name: CONNECT_STATUS_STORAGE_REPLICATION_FACTOR value: 'factor_for_replacation' - name: CONNECT_KEY_CONVERTER value: org.</description></item></channel></rss>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>数据一致性 on &lt;facelezzzz></title><link>https://facelezzzz.github.io/tags/%E6%95%B0%E6%8D%AE%E4%B8%80%E8%87%B4%E6%80%A7/</link><description>Recent content in 数据一致性 on &lt;facelezzzz></description><generator>Hugo</generator><language>en-us</language><lastBuildDate>Fri, 18 Jun 2021 00:00:00 +0000</lastBuildDate><atom:link href="https://facelezzzz.github.io/tags/%E6%95%B0%E6%8D%AE%E4%B8%80%E8%87%B4%E6%80%A7/index.xml" rel="self" type="application/rss+xml"/><item><title>CDC debezium 常见问题</title><link>https://facelezzzz.github.io/posts/debezium1/</link><pubDate>Fri, 18 Jun 2021 00:00:00 +0000</pubDate><guid>https://facelezzzz.github.io/posts/debezium1/</guid><description>&lt;h2 id="1mysql-ha拓扑故障转移后debezium失效">1.Mysql HA拓扑故障转移后，debezium失效&lt;/h2>
+&lt;p>严格意义讲这其实不算是debezium的问题。因为从原理上，debezium只是订阅了某个节点的binlog文件，并重放到kafka。
+所以对于HA拓扑下，如果没有启用mysql的GTID，则debezium始终跟随其中的一个节点(binlog加position(可以简单理解为物理点位))，如果该节点失效，需要等待该节点
+恢复。&lt;/p>
+&lt;p>在生产上可以启动mysql的GTID（全局事物标识）,这样debezium可以使用事务标识（可以简单理解为逻辑点位）而非之前的position,当debezium当前跟随的
+节点故障后，随着故障转移，可以通过重启debezium任务让debezium在另一个活跃的节点上正常工作（通过GTID匹配另一节点的binlog）。&lt;/p>
+&lt;h2 id="2db实例锁定">2.DB实例锁定&lt;/h2>
+&lt;p>默认的debezium在第一次初始化时，执行
+snapshot.mode=initial&lt;/p>
+&lt;p>在官网的文档中，其第一步就是”Grabs a global read lock that blocks writes by other database clients. “，所以在
+initial模式且进行的是第一次初始化时，debezium首先会获取全局读锁一直阻塞客户端对整个db的写，直到读取需要监视的表的schema后
+才会释放锁。&lt;/p>
+&lt;p>在启用GTID的情况下可以为需要捕获的节点新增一个slave,等slave同步后，让debezium订阅该slave，当snapshot执行完成后，下掉这个临时的节点，并
+重启启动debezium任务。&lt;/p>
+&lt;h2 id="3重启失败">3.重启失败&lt;/h2>
+&lt;p>之前我们碰到过一个特别的情况，日志如下&lt;/p>
+&lt;pre tabindex="0">&lt;code>[2021-11-22 03:52:40,126] INFO Snapshot step 2 - Determining captured tables (io.debezium.relational.RelationalSnapshotChangeEventSource)
+[2021-11-22 03:52:40,126] INFO Read list of available databases (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource)
+[2021-11-22 03:52:40,128] INFO Read list of available tables in each database (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource)
+...
+[2021-11-22 03:52:40,155] INFO Snapshot step 4 - Determining snapshot offset (io.debezium.relational.RelationalSnapshotChangeEventSource)
+[2021-11-22 03:52:40,157] INFO Read binlog position of MySQL primary server (io.debezium.connector.mysql.MySqlSnapshotChangeEventSource)
+[2021-11-22 03:52:40,159] INFO Snapshot - Final stage (io.debezium.pipeline.source.AbstractSnapshotChangeEventSource)
+[2021-11-22 03:52:40,159] ERROR Producer failure (io.debezium.pipeline.ErrorHandler)
+io.debezium.DebeziumException: io.debezium.DebeziumException: Cannot read the binlog filename and position via &amp;#39;SHOW MASTER STATUS&amp;#39;. Make sure your server is correctly configured
+at io.debezium.pipeline.source.AbstractSnapshotChangeEventSource.execute(AbstractSnapshotChangeEventSource.java:82)
+at io.debezium.pipeline.ChangeEventSourceCoordinator.lambda$start$0(ChangeEventSourceCoordinator.java:110)
+at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:515)
+at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)
+at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1128)
+at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:628)
+at java.base/java.lang.Thread.run(Thread.java:829)
+Caused by: io.debezium.DebeziumException: Cannot read the binlog filename and position via &amp;#39;SHOW MASTER STATUS&amp;#39;. Make sure your server is correctly configured
+at io.debezium.connector.mysql.MySqlSnapshotChangeEventSource.lambda$determineSnapshotOffset$4(MySqlSnapshotChangeEventSource.java:293)
+at io.debezium.jdbc.JdbcConnection.query(JdbcConnection.java:557)
+at io.debezium.jdbc.JdbcConnection.query(JdbcConnection.java:498)
+at io.debezium.connector.mysql.MySqlSnapshotChangeEventSource.determineSnapshotOffset(MySqlSnapshotChangeEventSource.java:276)
+at io.debezium.relational.RelationalSnapshotChangeEventSource.doExecute(RelationalSnapshotChangeEventSource.java:119)
+at io.debezium.pipeline.source.AbstractSnapshotChangeEventSource.execute(AbstractSnapshotChangeEventSource.java:71)
+... 6 more
+[2021-11-22 03:52:40,594] INFO WorkerSourceTask{id=connector-xxx} flushing 0 outstanding messages for offset commit (org.apache.kafka.connect.runtime.WorkerSourceTask)
+[2021-11-22 03:52:40,595] ERROR WorkerSourceTask{id=connector-xxx} Task threw an uncaught and unrecoverable exception. Task is being killed and will not recover until manually restarted (org.apache.kafka.connect.runtime.WorkerTask)
+org.apache.kafka.connect.errors.ConnectException: An exception occurred in the change event producer. This connector will be stopped.
+at io.debezium.pipeline.ErrorHandler.setProducerThrowable(ErrorHandler.java:42)
+at io.debezium.pipeline.ChangeEventSourceCoordinator.lambda$start$0(ChangeEventSourceCoordinator.java:127)
+at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:515)
+at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)
+at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1128)
+at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:628)
+at java.base/java.lang.Thread.run(Thread.java:829)
+Caused by: io.debezium.DebeziumException: io.debezium.DebeziumException: Cannot read the binlog filename and position via &amp;#39;SHOW MASTER STATUS&amp;#39;. Make sure your server is correctly configured
+at io.debezium.pipeline.source.AbstractSnapshotChangeEventSource.execute(AbstractSnapshotChangeEventSource.java:82)
+at io.debezium.pipeline.ChangeEventSourceCoordinator.lambda$start$0(ChangeEventSourceCoordinator.java:110)
+... 5 more
+Caused by: io.debezium.DebeziumException: Cannot read the binlog filename and position via &amp;#39;SHOW MASTER STATUS&amp;#39;. Make sure your server is correctly configured
+at io.debezium.connector.mysql.MySqlSnapshotChangeEventSource.lambda$determineSnapshotOffset$4(MySqlSnapshotChangeEventSource.java:293)
+at io.debezium.jdbc.JdbcConnection.query(JdbcConnection.java:557)
+at io.debezium.jdbc.JdbcConnection.query(JdbcConnection.java:498)
+at io.debezium.connector.mysql.MySqlSnapshotChangeEventSource.determineSnapshotOffset(MySqlSnapshotChangeEventSource.java:276)
+at io.debezium.relational.RelationalSnapshotChangeEventSource.doExecute(RelationalSnapshotChangeEventSource.java:119)
+at io.debezium.pipeline.source.AbstractSnapshotChangeEventSource.execute(AbstractSnapshotChangeEventSource.java:71)
+... 6 more
+
+[2021-11-22 03:52:40,595] INFO Stopping down connector (io.debezium.connector.common.BaseSourceTask)
+&lt;/code>&lt;/pre>&lt;p>当前是运维在维护mysql时进行了误操作，将某个mysql的新的binlog给删了，然后节点也临时下了个，执行debezium重启后报错，实际上报错就是
+在新的节点上找不到GTID对于的binlog记录，可以通过创建连接器或者恢复binlog来修复这个问题。&lt;/p></description></item><item><title>CDC debezium k8s实践</title><link>https://facelezzzz.github.io/posts/debezium0/</link><pubDate>Tue, 18 May 2021 00:00:00 +0000</pubDate><guid>https://facelezzzz.github.io/posts/debezium0/</guid><description>&lt;p>最近在处理呼叫中心的控制组件时（该组件提供简单的API允许用户发起外部呼叫请求（指使用机器人对某人打电话））碰到一个问题，在过去，控制组件接收用户的提交的呼叫数据后写入mysql，然后控制组件从mysql扫描提交的数据并写入redis，在数据量很小的情况下，这种模式工作的很好，然而随着数据量快速上升，扫描变得越来越慢，开始影响到用户。&lt;/p>
+&lt;p>呼叫数据表一共有15列，其中有些关键的字段，例如:CREATE_TIME（创建时间）/STATE（状态，用来标记是否已经写入redis）/PHONE（用户的号码，可能是加密号）/ID（偏序自增的标识，作为主键，由发号器生成）/PAYLOAD（载体，必要的信息，可能会很长）。&lt;/p>
+&lt;p>在旧的模式下，定时任务从表中根据STATE扫描出未进入redis的数据，然后提交到redis队列中，当更改成功时修改每条数据的STATE字段，随着业务量上升，数据量开始快速膨胀（大约亿级每月），根据CREATE_TIME扫描的速度开始变慢，同时由于扫描耗时增长（数据库负载增加），也影响到插入，系统开始变得缓慢，需要优化。&lt;/p>
+&lt;p>有一些看上去不太可靠的方式：a.直接向redis写入呼叫数据，然后从redis同步数据到mysql（写入mysql是必要的，后续有其他组件依赖于此）；b.先向kafka写入呼叫数据，然后分别同步到redis和kafka; c.使用cdc工具 d.写入mysql时同时写入redis&lt;/p>
+&lt;p>a首先被否决，因为如果用户请求超时，则没有好的办法判断请求的状态（失败？成功写入redis？写入redis成功但是同步mysql异常？），此外从redis同步到mysql并没有合适的解决方案，此外在呼叫中心上，重复呼叫是需要避免的，系统需要提供幂性。&lt;/p>
+&lt;p>b其实看上去可以解决问题，但是还是缺失事务，因为提交呼叫数据时，有其他的同事务操作，当然可以通过一些手段避免事务，但是会增大复杂性。&lt;/p>
+&lt;p>d其实最简单，但是存在双写问题。&lt;/p>
+&lt;p>最后c方案被选择，CDC看上去完美符合需求，保持原来的写入逻辑，将扫描操作移除，改为由CDC捕获binlog同步变化到redis。&lt;/p>
+&lt;p>存在很多CDC工具，如canal，maxwell，debezium等，在一番测试后，最终确定了debezium。理由是debezium更符合需要，开源，由红帽支持，默认情况下使用kafka connect（解决了高可用的问题），此外写入到kafka能直接被下游的系统消费。&lt;/p>
+&lt;h2 id="在云上部署">在云上部署&lt;/h2>
+&lt;p>官网提供Demo在Docker上运行简单的示例，这里提供在k8s上部署的示例。&lt;/p>
+&lt;h3 id="制作镜像">制作镜像:&lt;/h3>
+&lt;p>在debezium官网下载debezium-connector-mysql-1.5.4.Final-plugin.tar&lt;/p>
+&lt;p>基于confluentinc公司的kafka connect构建需要的镜像：
+DOCKERFILE如下：&lt;/p>
+&lt;pre tabindex="0">&lt;code>FROM confluentinc/cp-kafka-connect:6.2.0
+ADD debezium-connector-mysql-1.5.4.Final-plugin.tar /plugins/
+&lt;/code>&lt;/pre>&lt;p>构建完成后推送到必要的仓库。&lt;/p>
+&lt;h3 id="制作deployment">制作Deployment&lt;/h3>
+&lt;p>参照https://docs.confluent.io/platform/current/installation/docker/config-reference.html&lt;/p>
+&lt;pre tabindex="0">&lt;code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+ name: test-kafka-connector-debezium
+ namespace: test
+ labels:
+ app: test-kafka-connector-debezium
+spec:
+ replicas: 3
+ selector:
+ matchLabels:
+ app: test-kafka-connector-debezium
+ template:
+ metadata:
+ labels:
+ app: test-kafka-connector-debezium
+ logging: &amp;#39;true&amp;#39;
+ spec:
+ containers:
+ - name: test-kafka-connector-debezium
+ image: &amp;#34;&amp;lt;your_private_Harbor&amp;gt;/test/cp-kafka-connect-debezium:1.6.1&amp;#34;
+ imagePullPolicy: Always
+ ports:
+ - containerPort: 8080
+ env:
+ - name: CONNECT_BOOTSTRAP_SERVERS
+ value: &amp;lt;kafka_cluter_addrs&amp;gt;
+ - name: CONNECT_REST_PORT
+ value: &amp;#39;&amp;lt;rest_port&amp;gt;&amp;#39;
+ - name: CONNECT_GROUP_ID
+ value: test-debezium-connect-group
+ - name: CONNECT_CONFIG_STORAGE_TOPIC
+ value: test-debezium-connect-config-storage
+ - name: CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR
+ value: &amp;#39;&amp;lt;factor_for_replacation&amp;gt;&amp;#39;
+ - name: CONNECT_OFFSET_STORAGE_TOPIC
+ value: test-debezium-connect-offset-storage
+ - name: CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR
+ value: &amp;#39;factor_for_replacation&amp;#39;
+ - name: CONNECT_STATUS_STORAGE_TOPIC
+ value: test-debezium-connect-status-storage
+ - name: CONNECT_STATUS_STORAGE_REPLICATION_FACTOR
+ value: &amp;#39;factor_for_replacation&amp;#39;
+ - name: CONNECT_KEY_CONVERTER
+ value: org.apache.kafka.connect.json.JsonConverter
+ - name: CONNECT_VALUE_CONVERTER
+ value: org.apache.kafka.connect.json.JsonConverter
+ - name: CONNECT_INTERNAL_KEY_CONVERTER
+ value: org.apache.kafka.connect.json.JsonConverter
+ - name: CONNECT_INTERNAL_VALUE_CONVERTER
+ value: org.apache.kafka.connect.json.JsonConverter
+ - name: CONNECT_REST_ADVERTISED_HOST_NAME
+ value: localhost
+ - name: CONNECT_PLUGIN_PATH
+ value: /plugins
+ - name: CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE
+ value: &amp;#39;false&amp;#39;
+ - name: CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE
+ value: &amp;#39;false&amp;#39;
+&lt;/code>&lt;/pre>&lt;p>通过设定CONNECT_REST_ADVERTISED_HOST_NAME的值localhost避免将connect RESTAPI端点暴露出去，如果不需要安全限制，可以去除该配置。&lt;/p></description></item></channel></rss>
