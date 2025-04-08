@@ -1,9 +1,11 @@
 ---
-layout: post
-title:  "Hello world!"
-date:   2025-04-07 17:31:47 +0800
-categories: jekyll update
+title: CDC debezium k8s实践
+description: 在k8s部署Debezium避免mysql和redis双重写入问题
+date: "2021-05-18"
+tags: ["Debezium","数据一致性"]
 ---
+
+
 
 最近在处理呼叫中心的控制组件时（该组件提供简单的API允许用户发起外部呼叫请求（指使用机器人对某人打电话））碰到一个问题，在过去，控制组件接收用户的提交的呼叫数据后写入mysql，然后控制组件从mysql扫描提交的数据并写入redis，在数据量很小的情况下，这种模式工作的很好，然而随着数据量快速上升，扫描变得越来越慢，开始影响到用户。
 
